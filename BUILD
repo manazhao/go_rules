@@ -38,3 +38,7 @@ filegroup(
 		}),
 	visibility = ["//visibility:public"],
 	)
+
+
+load("//:def.bzl","go_prefix")
+go_prefix("github.com/manazhao/my_go_rules")
