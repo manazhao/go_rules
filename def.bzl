@@ -96,9 +96,6 @@ def _go_env(ctx):
 			}.get(ctx.fragments.cpp.cpu, {"GOOS": "linux", "GOARCH": "amd64"});
 
 
-def _output_base_path(ctx):
-	return ctx.configuration.genfiles_dir.path + "/../../.."
-
 # for testing purpose only, to make sure the go binary can be accessed.
 def _test_go_impl(ctx):
 	content = ctx.label.name + ctx.file.go_tool.path
@@ -116,27 +113,48 @@ test_go = rule(
 
 
 # Downads and install golang packages.
-def _go_package(ctx):
+def _go_package_impl(ctx):
+	if ctx.label.package != "":
+		fail("golang package rule must be at root directory: %s" % ctx.label.package)
+	remote = ctx.attr.remote
+	# Removes trailing slash.
+	if remote.endswith("/"):
+		remote = remote[:remote.rfind("/") - 1]
+	if not remote.endswith("/..."):
+		remote = remote + "/..."
 	cmds = [
 			"echo %s > %s" % (ctx.attr.remote, ctx.outputs.out.path),
-			"export GOPATH=$(pwd)/external",
-			"ln -s $GOPATH $GOPATH/src",
-			"%s get -d %s" % (ctx.file.go_tool.path, ctx.attr.remote),
-			"unlink $GOPATH/src"
+			"mkdir -p $(pwd)/external/golang_packages/src",
+			"export GOPATH=$(pwd)/external/golang_packages",
+			"%s get -d %s" % (ctx.file.go_tool.path, remote),
 			];
 
 	ctx.action(outputs = [ctx.outputs.out], command = " && ".join(cmds), env = _go_env(ctx) + shell_env)
+	return struct(files = set([ctx.outputs.out]))
 
+def _go_package_out(attr):
+	remote = attr.remote
+	# Removes the /... suffix if exists.
+	if remote.endswith("/..."):
+		remote = remote[:remote.rfind("/...") - 1]
+	remote = "@" + "_".join(remote.split("/"))
+	return {"out" : remote + ".marker"}
 
-go_package = rule(
-		_go_package,
+_go_package_rule = rule(
+		_go_package_impl,
 		attrs = _golang_attrs + {
 				"remote": attr.string(mandatory = True),
 				},
-		outputs = {"out":"%{name}.marker"},
+		outputs = _go_package_out,
 		fragments = ["cpp"]
 		);
 
+def go_package(name, remote):
+	_go_package_rule(
+			name = name,
+			remote = remote,
+			visibility = ["//visibility:public"],
+			)
 
 # Builds and installs golang library.
 
@@ -156,6 +174,10 @@ def _go_library_impl(ctx):
 	if prefix == None:
 		fail("go_prefix is not set")
 
+	inputs = ctx.files.srcs
+	for d in ctx.attr.deps:
+		inputs += list(d.files)
+
 	prefix_last= prefix[prefix.rfind("/") + 1:]
 	prefix_all_but_last = prefix[:prefix.rfind("/")]
 	go_pkg_dir = "$GOPATH/pkg/%s_%s" % (goos, goarch)
@@ -164,37 +186,36 @@ def _go_library_impl(ctx):
 	short_path = short_path[:short_path.rfind(basename) - 1]
 	installed_object_path = "/".join(
 			[
-					ctx.configuration.bin_dir.path,
+					"$GOPATH/pkg",
+					"%s_%s" %(goos, goarch),
 					prefix,
 					short_path + ".a"
 					])
 
-	cmds = [
+	cmd = " && ".join([
 			"export GOROOT=$(pwd)/%s/.." % ctx.file.go_tool.dirname,
-			"export GOPATH=$(pwd)/external",
-			"ln -s $GOPATH $GOPATH/src",
-			"mkdir -p $(pwd)/external/%s" % prefix_all_but_last,
-			"ln -s $(pwd) $GOPATH/%s" % prefix,
+			"export GOPATH=$(pwd)/external/golang_packages",
+			"mkdir -p $GOPATH/src/%s" % prefix_all_but_last,
+			"ln -s $(pwd) $GOPATH/src/%s" % prefix,
 			"mkdir -p $GOPATH/pkg",
-			"%s install -pkgdir %s %s" % (ctx.file.go_tool.path, ctx.configuration.bin_dir.path, prefix + "/" + package_dir),
-			"ln -s $(pwd)/%s %s" % (installed_object_path, ctx.outputs.out.path)
-			]
+			"%s install %s" % (ctx.file.go_tool.path, prefix + "/" + package_dir),
+			"mv %s %s" % (installed_object_path, ctx.outputs.out.path),
+			"ln -s $(pwd)/%s %s" % (ctx.outputs.out.path, installed_object_path)
+			])
 	ctx.action(
-			inputs = ctx.files.srcs,
+			inputs = inputs,
 			outputs = [ctx.outputs.out],
-			command = " && ".join(cmds),
+			command = cmd,
 			env = _go_env(ctx) + shell_env
 			)
+	return struct(files=set([ctx.outputs.out]))
 
 go_library = rule(
 		_go_library_impl,
 		attrs = _golang_attrs + {
 				"srcs" : attr.label_list(allow_files = True),
-				"deps": attr.label_list(allow_files = True),
+				"deps": attr.label_list(allow_files = True)
 				},
 		outputs =  {"out" : "%{name}.a"},
 		fragments = ["cpp"]
 		)
-
-
-

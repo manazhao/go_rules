@@ -5,8 +5,4 @@ test_go(
 		)
 
 
-go_package(
-		name = "golang_protobuf",
-		remote = "github.com/golang/protobuf/...",
-		)
 

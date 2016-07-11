@@ -40,5 +40,10 @@ filegroup(
 	)
 
 
-load("//:def.bzl","go_prefix")
+load("//:def.bzl","go_prefix", "go_package")
 go_prefix("github.com/manazhao/my_go_rules")
+
+go_package(
+		name = "golang_protobuf",
+		remote = "github.com/golang/protobuf"
+		)
