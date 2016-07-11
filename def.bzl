@@ -157,18 +157,27 @@ def _go_library_impl(ctx):
 		fail("go_prefix is not set")
 
 	prefix_last= prefix[prefix.rfind("/") + 1:]
-	print(prefix_last)
 	prefix_all_but_last = prefix[:prefix.rfind("/")]
-	print(prefix_all_but_last)
+	go_pkg_dir = "$GOPATH/pkg/%s_%s" % (goos, goarch)
+	short_path = ctx.outputs.out.short_path
+	basename = ctx.outputs.out.basename
+	short_path = short_path[:short_path.rfind(basename) - 1]
+	installed_object_path = "/".join(
+			[
+					ctx.configuration.bin_dir.path,
+					prefix,
+					short_path + ".a"
+					])
+
 	cmds = [
 			"export GOROOT=$(pwd)/%s/.." % ctx.file.go_tool.dirname,
 			"export GOPATH=$(pwd)/external",
 			"ln -s $GOPATH $GOPATH/src",
 			"mkdir -p $(pwd)/external/%s" % prefix_all_but_last,
 			"ln -s $(pwd) $GOPATH/%s" % prefix,
-			"mkdir $GOPATH/pkg",
-			"ln -s $(pwd)/bazel-bin $GOPATH/pkg/%s_%s" % (goos, goarch),
-			"%s build -o %s %s" % (ctx.file.go_tool.path, ctx.configuration.bin_dir, prefix + "/" + package_dir)
+			"mkdir -p $GOPATH/pkg",
+			"%s install -pkgdir %s %s" % (ctx.file.go_tool.path, ctx.configuration.bin_dir.path, prefix + "/" + package_dir),
+			"ln -s $(pwd)/%s %s" % (installed_object_path, ctx.outputs.out.path)
 			]
 	ctx.action(
 			inputs = ctx.files.srcs,
@@ -177,14 +186,13 @@ def _go_library_impl(ctx):
 			env = _go_env(ctx) + shell_env
 			)
 
-
 go_library = rule(
 		_go_library_impl,
 		attrs = _golang_attrs + {
 				"srcs" : attr.label_list(allow_files = True),
-				"deps": attr.label_list(allow_files = True)
+				"deps": attr.label_list(allow_files = True),
 				},
-		outputs = {"out": "%{name}.a"},
+		outputs =  {"out" : "%{name}.a"},
 		fragments = ["cpp"]
 		)
 

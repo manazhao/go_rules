@@ -1,6 +1,6 @@
 load("//:def.bzl","go_library")
 
 go_library(
-		name = "calculator",
+		name = "default",
 		srcs = ["sum.go"],
 		)
