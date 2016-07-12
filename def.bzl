@@ -156,7 +156,6 @@ def go_package(name, remote):
 			visibility = ["//visibility:public"],
 			)
 
-# Builds and installs golang library.
 
 def _go_library_impl(ctx):
 	gc_flags = "'-I $(pwd)/external -I ./'"
@@ -197,7 +196,6 @@ def _go_library_impl(ctx):
 			"export GOPATH=$(pwd)/external/golang_packages",
 			"mkdir -p $GOPATH/src/%s" % prefix_all_but_last,
 			"ln -s $(pwd) $GOPATH/src/%s" % prefix,
-			"mkdir -p $GOPATH/pkg",
 			"%s install %s" % (ctx.file.go_tool.path, prefix + "/" + package_dir),
 			"mv %s %s" % (installed_object_path, ctx.outputs.out.path),
 			"ln -s $(pwd)/%s %s" % (ctx.outputs.out.path, installed_object_path)
@@ -217,5 +215,66 @@ go_library = rule(
 				"deps": attr.label_list(allow_files = True)
 				},
 		outputs =  {"out" : "%{name}.a"},
+		fragments = ["cpp"]
+		)
+
+def _go_binary_impl(ctx):
+	gc_flags = "'-I $(pwd)/external -I ./'"
+	goos = _go_env(ctx)["GOOS"]
+	goarch = _go_env(ctx)["GOARCH"]
+	if len(ctx.files.srcs) == 0:
+		fail("go source files must be provided")
+	# verify all the source files must be under the same directory
+	package_dir = ctx.files.srcs[0].dirname
+	for f in ctx.files.srcs:
+		if f.dirname != package_dir:
+			fail("all source files must be under the same directory")
+
+	prefix = ctx.attr.go_prefix.prefix
+	if prefix == None:
+		fail("go_prefix is not set")
+
+	inputs = ctx.files.srcs
+	for d in ctx.attr.deps:
+		inputs += list(d.files)
+
+	prefix_last= prefix[prefix.rfind("/") + 1:]
+	prefix_all_but_last = prefix[:prefix.rfind("/")]
+	# output binary name.
+	short_path = ctx.outputs.executable.short_path
+	basename = ctx.outputs.executable.basename
+	short_path = short_path[:short_path.rfind(basename) - 1]
+	gobin_path = "/tmp/%s" % short_path
+	# Go uses the last component of the package as the binary name.
+	# For example: if the package is /foo/bar, the binary name would be 
+	# bar.
+	binary_name = package_dir[package_dir.rfind("/")+1:]
+	cmd = " && ".join([
+			"mkdir -p bazel-bin/%s" % package_dir,
+			"mkdir -p %s" % gobin_path,
+			"export GOBIN=%s" % gobin_path,
+			"export GOROOT=$(pwd)/%s/.." % ctx.file.go_tool.dirname,
+			"export GOPATH=$(pwd)/external/golang_packages",
+			"mkdir -p $GOPATH/src/%s" % prefix_all_but_last,
+			"ln -s $(pwd) $GOPATH/src/%s" % prefix,
+			"%s install %s" % (ctx.file.go_tool.path, prefix + "/" + package_dir),
+			"mv $GOBIN/%s %s" % (binary_name, ctx.outputs.executable.path),
+			"rm -rf $GOBIN"
+			])
+	ctx.action(
+			inputs = inputs,
+			outputs = [ctx.outputs.executable],
+			command = cmd,
+			env = _go_env(ctx) + shell_env
+			)
+	return struct(files=set([ctx.outputs.executable]))
+
+go_binary = rule(
+		_go_binary_impl,
+		attrs = _golang_attrs + {
+				"srcs" : attr.label_list(allow_files = True),
+				"deps": attr.label_list(allow_files = True)
+				},
+		executable = True,
 		fragments = ["cpp"]
 		)
