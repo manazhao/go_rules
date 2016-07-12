@@ -158,7 +158,6 @@ def go_package(name, remote):
 
 
 def _go_library_impl(ctx):
-	gc_flags = "'-I $(pwd)/external -I ./'"
 	goos = _go_env(ctx)["GOOS"]
 	goarch = _go_env(ctx)["GOARCH"]
 	if len(ctx.files.srcs) == 0:
@@ -219,7 +218,6 @@ go_library = rule(
 		)
 
 def _go_binary_impl(ctx):
-	gc_flags = "'-I $(pwd)/external -I ./'"
 	goos = _go_env(ctx)["GOOS"]
 	goarch = _go_env(ctx)["GOARCH"]
 	if len(ctx.files.srcs) == 0:
@@ -277,4 +275,63 @@ go_binary = rule(
 				},
 		executable = True,
 		fragments = ["cpp"]
+		)
+
+
+# Testing rule.
+def _go_test_impl(ctx):
+	goos = _go_env(ctx)["GOOS"]
+	goarch = _go_env(ctx)["GOARCH"]
+	if len(ctx.files.srcs) == 0:
+		fail("go source files must be provided")
+	# verify all the source files must be under the same directory
+	package_dir = ctx.files.srcs[0].dirname
+	for f in ctx.files.srcs:
+		if f.dirname != package_dir:
+			fail("all source files must be under the same directory")
+
+	prefix = ctx.attr.go_prefix.prefix
+	if prefix == None:
+		fail("go_prefix is not set")
+
+	inputs = ctx.files.srcs
+	for d in ctx.attr.deps:
+		inputs += list(d.files)
+
+	prefix_last= prefix[prefix.rfind("/") + 1:]
+	prefix_all_but_last = prefix[:prefix.rfind("/")]
+	# output binary name.
+	short_path = ctx.outputs.executable.short_path
+	basename = ctx.outputs.executable.basename
+	short_path = short_path[:short_path.rfind(basename) - 1]
+	# Go uses the last component of the package as the binary name.
+	# For example: if the package is /foo/bar, the binary name would be 
+	# bar.
+	binary_name = package_dir[package_dir.rfind("/")+1:]
+	cmd = " && ".join([
+			"mkdir -p bazel-bin/%s" % package_dir,
+			"export GOROOT=$(pwd)/%s/.." % ctx.file.go_tool.dirname,
+			"export GOPATH=$(pwd)/external/golang_packages",
+			"mkdir -p $GOPATH/src/%s" % prefix_all_but_last,
+			"ln -s $(pwd) $GOPATH/src/%s" % prefix,
+			# Just creates the binary, don't run it.
+			"%s test -c -i -o %s %s" % (ctx.file.go_tool.path, ctx.outputs.executable.path, prefix + "/" + package_dir),
+			])
+	ctx.action(
+			inputs = inputs,
+			outputs = [ctx.outputs.executable],
+			command = cmd,
+			env = _go_env(ctx) + shell_env
+			)
+	return struct(files=set([ctx.outputs.executable]))
+
+go_test = rule(
+		_go_test_impl,
+		attrs = _golang_attrs + {
+				"srcs" : attr.label_list(allow_files = True),
+				"deps": attr.label_list(allow_files = True)
+				},
+		executable = True,
+		fragments = ["cpp"],
+		test = True
 		)
